@@ -1,4 +1,4 @@
-module git.enku.io/directus_client
+module github.com/FlatMapIO/directus_client
 
 go 1.18
 
