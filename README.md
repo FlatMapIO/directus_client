@@ -1,6 +1,11 @@
 # Directus Client
 > **WARN** Limited directus api spec support
 
+```
+GOPRIVATE=gitlab.enkuchat.com \
+go get -u gitlab.enkuchat.com/backend/directus_client
+```
+
 ## Features
 
 - Webhook Server
