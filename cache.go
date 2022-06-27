@@ -83,15 +83,15 @@ func (r redisCacheService) Clear() error {
 
 type QueryCache interface {
 	Get(collection, rawQuery string) (io.ReadCloser, error)
-	Set(collection, rawQuery string, value io.Reader) error
+	Set(collection, rawQuery string, value io.Reader) ([]byte, error)
 }
 type noopCacheService int
 
 func (noopCacheService) Get(collection, rawQuery string) (io.ReadCloser, error) {
 	return nil, errors.New("get item from noop cache")
 }
-func (noopCacheService) Set(collection, rawQuery string, value io.Reader) error {
-	return nil
+func (noopCacheService) Set(collection, rawQuery string, value io.Reader) ([]byte, error) {
+	return io.ReadAll(value)
 }
 
 type refreshableQueryCache struct {
@@ -132,20 +132,20 @@ func (q *refreshableQueryCache) Get(collection string, rawQuery string) (io.Read
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
-func (q *refreshableQueryCache) Set(collection string, rawQuery string, data io.Reader) error {
+func (q *refreshableQueryCache) Set(collection string, rawQuery string, data io.Reader) ([]byte, error) {
 
 	b, err := io.ReadAll(data)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := q.store.Set(queryKey(collection, rawQuery), b); err != nil {
-		return err
+		return nil, err
 	}
 
 	q.mu.Lock()
 	if _, ok := q.observedCollections[collection]; ok {
-		return nil
+		return b, nil
 	}
 	q.observedCollections[collection] = struct{}{}
 	q.mu.Unlock()
@@ -157,7 +157,7 @@ func (q *refreshableQueryCache) Set(collection string, rawQuery string, data io.
 		log.Warn().Str("collection", collection).Msg("failed to add observer")
 	}
 
-	return nil
+	return b, nil
 }
 func (q *refreshableQueryCache) pruneCollection(c string) error {
 	q.mu.Lock()

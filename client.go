@@ -1,6 +1,7 @@
 package directus_client
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"github.com/rs/zerolog/log"
@@ -99,6 +100,7 @@ func (d *DirectusClient) Call(r *http.Request) (*http.Response, error) {
 
 	data, err := d.cache.Get(collection, r.URL.RawQuery)
 	if err == nil {
+		log.Warn().Err(err).Msg("cache hit")
 		return &http.Response{StatusCode: http.StatusOK, Body: data}, nil
 	}
 	resp, err := d.client.Do(r)
@@ -106,9 +108,11 @@ func (d *DirectusClient) Call(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusOK {
-		if err := d.cache.Set(collection, r.URL.RawQuery, resp.Body); err != nil {
+		data, err := d.cache.Set(collection, r.URL.RawQuery, resp.Body)
+		if err != nil {
 			log.Warn().Err(err).Str("path", r.URL.Path).Msg("failed to set cache")
 		}
+		resp.Body = io.NopCloser(bytes.NewReader(data))
 	}
 
 	return resp, nil
