@@ -69,50 +69,52 @@ func NewDirectusClient(baseURL string, token string, cache QueryCache) (*Directu
 	}, nil
 }
 
-func (d *DirectusClient) Call(r *http.Request) (*http.Response, error) {
-	switch r.Method {
+func (d *DirectusClient) Call(req *http.Request) (*http.Response, error) {
+	switch req.Method {
 	case "GET", "POST", "PATCH", "DELETE":
 		break
 	default:
 		return nil, errors.New("invalid method")
 	}
-	if r.URL == nil {
+	if req.URL == nil {
 		return nil, errors.New("url is required")
 	}
-	if r.Header == nil {
-		r.Header = http.Header{}
+	if req.Header == nil {
+		req.Header = http.Header{}
 	}
-	r.Header.Set("Authorization", "Bearer "+d.token)
-	r.Header.Set("Content-Type", "application/json")
-	r.RequestURI = ""
-	r.URL.Scheme = d.baseURL.Scheme
-	r.URL.Host = d.baseURL.Host
-	r.Host = d.baseURL.Host
-	if r.URL.RawQuery == "" {
-		r.URL.RawQuery = "limit=" + strconv.Itoa(ITEMS_MAX_LIMIT)
+	req.Header.Set("Authorization", "Bearer "+d.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.RequestURI = ""
+	req.URL.Scheme = d.baseURL.Scheme
+	req.URL.Host = d.baseURL.Host
+	req.Host = d.baseURL.Host
+	if req.URL.RawQuery == "" {
+		req.URL.RawQuery = "limit=" + strconv.Itoa(ITEMS_MAX_LIMIT)
 	}
 
-	split := strings.SplitN(r.URL.Path, "items/", 2)
+	split := strings.SplitN(req.URL.Path, "items/", 2)
 	if len(split) != 2 {
 		return nil, errors.New("invalid url")
 	}
 	collection := split[1]
 
-	data, err := d.cache.Get(collection, r.URL.RawQuery)
-	if err == nil {
-		log.Warn().Err(err).Msg("cache hit")
-		return &http.Response{StatusCode: http.StatusOK, Body: data}, nil
+	data, err := d.cache.Get(collection, req.URL.RawQuery)
+	if len(data) > 0 {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(data))}, nil
 	}
-	resp, err := d.client.Do(r)
+	resp, err := d.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+
 	if resp.StatusCode == http.StatusOK {
-		data, err := d.cache.Set(collection, r.URL.RawQuery, resp.Body)
+		copied := new(bytes.Buffer)
+		io.Copy(copied, resp.Body)
+		resp.Body = io.NopCloser(copied)
+		err := d.cache.Set(collection, req.URL.RawQuery, copied.Bytes())
 		if err != nil {
-			log.Warn().Err(err).Str("path", r.URL.Path).Msg("failed to set cache")
+			log.Warn().Err(err).Str("path", req.URL.Path).Msg("failed to set cache")
 		}
-		resp.Body = io.NopCloser(bytes.NewReader(data))
 	}
 
 	return resp, nil

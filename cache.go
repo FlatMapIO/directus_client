@@ -1,14 +1,12 @@
 package directus_client
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/cespare/xxhash/v2"
 	"github.com/go-redis/redis/v8"
 	"github.com/rs/zerolog/log"
-	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -82,16 +80,16 @@ func (r redisCacheService) Clear() error {
 }
 
 type QueryCache interface {
-	Get(collection, rawQuery string) (io.ReadCloser, error)
-	Set(collection, rawQuery string, value io.Reader) ([]byte, error)
+	Get(collection, rawQuery string) ([]byte, error)
+	Set(collection, rawQuery string, value []byte) error
 }
 type noopCacheService int
 
-func (noopCacheService) Get(collection, rawQuery string) (io.ReadCloser, error) {
+func (noopCacheService) Get(collection, rawQuery string) ([]byte, error) {
 	return nil, errors.New("get item from noop cache")
 }
-func (noopCacheService) Set(collection, rawQuery string, value io.Reader) ([]byte, error) {
-	return io.ReadAll(value)
+func (noopCacheService) Set(collection, rawQuery string, value []byte) error {
+	return nil
 }
 
 type refreshableQueryCache struct {
@@ -124,40 +122,30 @@ func queryKey(c string, q string) string {
 
 	return c + ":" + strconv.FormatUint(h.Sum64(), 16)
 }
-func (q *refreshableQueryCache) Get(collection string, rawQuery string) (io.ReadCloser, error) {
+func (q *refreshableQueryCache) Get(collection string, rawQuery string) ([]byte, error) {
 	key := queryKey(collection, rawQuery)
-	data, err := q.store.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	return io.NopCloser(bytes.NewReader(data)), nil
+	return q.store.Get(key)
 }
-func (q *refreshableQueryCache) Set(collection string, rawQuery string, data io.Reader) ([]byte, error) {
-
-	b, err := io.ReadAll(data)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := q.store.Set(queryKey(collection, rawQuery), b); err != nil {
-		return nil, err
+func (q *refreshableQueryCache) Set(collection string, rawQuery string, data []byte) error {
+	if err := q.store.Set(queryKey(collection, rawQuery), data); err != nil {
+		return err
 	}
 
 	q.mu.Lock()
 	if _, ok := q.observedCollections[collection]; ok {
-		return b, nil
+		return nil
 	}
 	q.observedCollections[collection] = struct{}{}
 	q.mu.Unlock()
 
-	err = q.wes.AddObserver(collection, func(we WebhookEvent) {
+	err := q.wes.AddObserver(collection, func(we WebhookEvent) {
 		q.pruneCollection(collection)
 	})
 	if err != nil {
 		log.Warn().Str("collection", collection).Msg("failed to add observer")
 	}
 
-	return b, nil
+	return nil
 }
 func (q *refreshableQueryCache) pruneCollection(c string) error {
 	q.mu.Lock()
